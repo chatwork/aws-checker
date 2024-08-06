@@ -6,16 +6,22 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSigint(t *testing.T) {
-	sigs := make(chan os.Signal, 1)
+	var (
+		runErr = make(chan error, 1)
+
+		sigs = make(chan os.Signal, 1)
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go func() {
-		Run(sigs)
+		runErr <- Run(sigs)
 
 		cancel()
 	}()
@@ -24,6 +30,7 @@ func TestSigint(t *testing.T) {
 
 	select {
 	case <-ctx.Done():
+		require.NoError(t, <-runErr)
 	case <-time.After(1 * time.Second):
 		t.Fatal("timeout")
 	}

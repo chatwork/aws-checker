@@ -39,18 +39,27 @@ func main() {
 	// Register the channel to receive SIGINT, SIGTERM signals
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	Run(sigs)
+	if err := Run(sigs); err != nil {
+		log.Fatalf("Error: %v", err)
+	}
 }
 
-func Run(sigs chan os.Signal) {
+func Run(sigs chan os.Signal) error {
+	var (
+		httpServerGracefulShutdownTimeout = 5 * time.Second
+
+		httpServer = &http.Server{Addr: ":8080"}
+		listenErr  = make(chan error, 1)
+	)
+
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
-		log.Fatal(http.ListenAndServe(":8080", nil))
+		listenErr <- httpServer.ListenAndServe()
 	}()
 
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
-		log.Fatalf("unable to load SDK config, %v", err)
+		return fmt.Errorf("unable to load SDK config, %v", err)
 	}
 
 	s3Client := s3.NewFromConfig(cfg)
@@ -66,7 +75,20 @@ func Run(sigs chan os.Signal) {
 		select {
 		case <-sigs:
 			fmt.Println("Received signal, exiting...")
-			return
+
+			// Graceful shutdown
+			ctx, cancel := context.WithTimeout(context.Background(), httpServerGracefulShutdownTimeout)
+			defer cancel()
+
+			if err := httpServer.Shutdown(ctx); err != nil {
+				return fmt.Errorf("failed to shutdown http server, %v", err)
+			}
+
+			log.Printf("[DEBUG] HTTP server shut down with this return value: %v", <-listenErr)
+
+			log.Printf("HTTP server shut down successfully")
+
+			return nil
 		default:
 			time.Sleep(1 * time.Second)
 			// S3 GetObject
