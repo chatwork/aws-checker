@@ -34,6 +34,15 @@ func init() {
 }
 
 func main() {
+	// Create a channel to receive OS signals
+	sigs := make(chan os.Signal, 1)
+	// Register the channel to receive SIGINT, SIGTERM signals
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	Run(sigs)
+}
+
+func Run(sigs chan os.Signal) {
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
 		log.Fatal(http.ListenAndServe(":8080", nil))
@@ -53,62 +62,52 @@ func main() {
 	dynamodbTable := os.Getenv("DYNAMODB_TABLE")
 	sqsQueueURL := os.Getenv("SQS_QUEUE_URL")
 
-	// Create a channel to receive OS signals
-	sigs := make(chan os.Signal, 1)
-	// Register the channel to receive SIGINT, SIGTERM signals
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	for {
+		select {
+		case <-sigs:
+			fmt.Println("Received signal, exiting...")
+			return
+		default:
+			time.Sleep(1 * time.Second)
+			// S3 GetObject
+			getStart := time.Now()
+			_, err = s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+				Bucket: &s3Bucket,
+				Key:    &s3Key,
+			})
+			getDuration := time.Since(getStart).Seconds()
+			if err != nil {
+				log.Printf("failed to get object, %v", err)
+				requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
+			} else {
+				requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
+			}
 
-	go func() {
-		for {
-			select {
-			case <-sigs:
-				fmt.Println("Received signal, exiting...")
-				os.Exit(0)
-			default:
-				time.Sleep(1 * time.Second)
-				// S3 GetObject
-				getStart := time.Now()
-				_, err = s3Client.GetObject(context.Background(), &s3.GetObjectInput{
-					Bucket: &s3Bucket,
-					Key:    &s3Key,
-				})
-				getDuration := time.Since(getStart).Seconds()
-				if err != nil {
-					log.Printf("failed to get object, %v", err)
-					requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
-				} else {
-					requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
-				}
+			// DynamoDB Scan
+			dynamoStart := time.Now()
+			_, err = dynamoClient.Scan(context.Background(), &dynamodb.ScanInput{
+				TableName: &dynamodbTable,
+			})
+			dynamoDuration := time.Since(dynamoStart).Seconds()
+			if err != nil {
+				log.Printf("failed to get item, %v", err)
+				requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
+			} else {
+				requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
+			}
 
-				// DynamoDB Scan
-				dynamoStart := time.Now()
-				_, err = dynamoClient.Scan(context.Background(), &dynamodb.ScanInput{
-					TableName: &dynamodbTable,
-				})
-				dynamoDuration := time.Since(dynamoStart).Seconds()
-				if err != nil {
-					log.Printf("failed to get item, %v", err)
-					requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
-				} else {
-					requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
-				}
-
-				// SQS ReceiveMessage
-				sqsStart := time.Now()
-				_, err = sqsCleint.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
-					QueueUrl: &sqsQueueURL,
-				})
-				sqsDuration := time.Since(sqsStart).Seconds()
-				if err != nil {
-					log.Printf("failed to receive message, %v", err)
-					requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
-				} else {
-					requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
-				}
+			// SQS ReceiveMessage
+			sqsStart := time.Now()
+			_, err = sqsCleint.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+				QueueUrl: &sqsQueueURL,
+			})
+			sqsDuration := time.Since(sqsStart).Seconds()
+			if err != nil {
+				log.Printf("failed to receive message, %v", err)
+				requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
+			} else {
+				requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
 			}
 		}
-	}()
-
-	// Wait forever
-	select {}
+	}
 }
