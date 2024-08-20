@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -44,7 +45,7 @@ func main() {
 	}
 }
 
-func Run(sigs chan os.Signal) error {
+func Run(sigs chan os.Signal, opts ...Option) error {
 	var (
 		httpServerGracefulShutdownTimeout = 5 * time.Second
 
@@ -62,14 +63,17 @@ func Run(sigs chan os.Signal) error {
 		return fmt.Errorf("unable to load SDK config, %v", err)
 	}
 
-	s3Client := s3.NewFromConfig(cfg)
-	dynamoClient := dynamodb.NewFromConfig(cfg)
-	sqsCleint := sqs.NewFromConfig(cfg)
+	checks := make(chan struct{}, 1)
+	chkr := newChecker(cfg, opts...)
 
-	s3Bucket := os.Getenv("S3_BUCKET")
-	s3Key := os.Getenv("S3_KEY")
-	dynamodbTable := os.Getenv("DYNAMODB_TABLE")
-	sqsQueueURL := os.Getenv("SQS_QUEUE_URL")
+	go func() {
+		for {
+			select {
+			case <-checks:
+				chkr.doCheck()
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -89,47 +93,86 @@ func Run(sigs chan os.Signal) error {
 			log.Printf("HTTP server shut down successfully")
 
 			return nil
-		default:
-			time.Sleep(1 * time.Second)
-			// S3 GetObject
-			getStart := time.Now()
-			_, err = s3Client.GetObject(context.Background(), &s3.GetObjectInput{
-				Bucket: &s3Bucket,
-				Key:    &s3Key,
-			})
-			getDuration := time.Since(getStart).Seconds()
-			if err != nil {
-				log.Printf("failed to get object, %v", err)
-				requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
-			} else {
-				requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
-			}
-
-			// DynamoDB Scan
-			dynamoStart := time.Now()
-			_, err = dynamoClient.Scan(context.Background(), &dynamodb.ScanInput{
-				TableName: &dynamodbTable,
-			})
-			dynamoDuration := time.Since(dynamoStart).Seconds()
-			if err != nil {
-				log.Printf("failed to get item, %v", err)
-				requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
-			} else {
-				requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
-			}
-
-			// SQS ReceiveMessage
-			sqsStart := time.Now()
-			_, err = sqsCleint.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
-				QueueUrl: &sqsQueueURL,
-			})
-			sqsDuration := time.Since(sqsStart).Seconds()
-			if err != nil {
-				log.Printf("failed to receive message, %v", err)
-				requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
-			} else {
-				requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
+		case <-time.After(1 * time.Second):
+			select {
+			case checks <- struct{}{}:
+			default:
 			}
 		}
+	}
+}
+
+type checker struct {
+	s3Client     *s3.Client
+	dynamoClient *dynamodb.Client
+	sqsClient    *sqs.Client
+
+	s3Bucket      string
+	s3Key         string
+	dynamodbTable string
+	sqsQueueURL   string
+
+	s3Opts []func(*s3.Options)
+}
+
+type Option func(*checker)
+
+func newChecker(cfg aws.Config, opts ...Option) *checker {
+	c := &checker{}
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	c.s3Client = s3.NewFromConfig(cfg, c.s3Opts...)
+	c.dynamoClient = dynamodb.NewFromConfig(cfg)
+	c.sqsClient = sqs.NewFromConfig(cfg)
+
+	c.s3Bucket = os.Getenv("S3_BUCKET")
+	c.s3Key = os.Getenv("S3_KEY")
+	c.dynamodbTable = os.Getenv("DYNAMODB_TABLE")
+	c.sqsQueueURL = os.Getenv("SQS_QUEUE_URL")
+
+	return c
+}
+
+func (c *checker) doCheck() {
+	// S3 GetObject
+	getStart := time.Now()
+	_, err := c.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: &c.s3Bucket,
+		Key:    &c.s3Key,
+	})
+	getDuration := time.Since(getStart).Seconds()
+	if err != nil {
+		log.Printf("failed to get object, %v", err)
+		requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
+	} else {
+		requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
+	}
+
+	// DynamoDB Scan
+	dynamoStart := time.Now()
+	_, err = c.dynamoClient.Scan(context.Background(), &dynamodb.ScanInput{
+		TableName: &c.dynamodbTable,
+	})
+	dynamoDuration := time.Since(dynamoStart).Seconds()
+	if err != nil {
+		log.Printf("failed to get item, %v", err)
+		requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
+	} else {
+		requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
+	}
+
+	// SQS ReceiveMessage
+	sqsStart := time.Now()
+	_, err = c.sqsClient.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		QueueUrl: &c.sqsQueueURL,
+	})
+	sqsDuration := time.Since(sqsStart).Seconds()
+	if err != nil {
+		log.Printf("failed to receive message, %v", err)
+		requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
+	} else {
+		requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
 	}
 }
