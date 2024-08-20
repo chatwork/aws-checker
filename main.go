@@ -105,7 +105,7 @@ func Run(sigs chan os.Signal, opts ...Option) error {
 type checker struct {
 	s3Client     *s3.Client
 	dynamoClient *dynamodb.Client
-	sqsCleint    *sqs.Client
+	sqsClient    *sqs.Client
 
 	s3Bucket      string
 	s3Key         string
@@ -125,7 +125,7 @@ func newChecker(cfg aws.Config, opts ...Option) *checker {
 
 	c.s3Client = s3.NewFromConfig(cfg, c.s3Opts...)
 	c.dynamoClient = dynamodb.NewFromConfig(cfg)
-	c.sqsCleint = sqs.NewFromConfig(cfg)
+	c.sqsClient = sqs.NewFromConfig(cfg)
 
 	c.s3Bucket = os.Getenv("S3_BUCKET")
 	c.s3Key = os.Getenv("S3_KEY")
@@ -165,7 +165,7 @@ func (c *checker) doCheck() {
 
 	// SQS ReceiveMessage
 	sqsStart := time.Now()
-	_, err = c.sqsCleint.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+	_, err = c.sqsClient.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
 		QueueUrl: &c.sqsQueueURL,
 	})
 	sqsDuration := time.Since(sqsStart).Seconds()
