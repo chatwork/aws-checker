@@ -40,12 +40,27 @@ func main() {
 	// Register the channel to receive SIGINT, SIGTERM signals
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	if err := Run(sigs); err != nil {
+	if err := Run(ContextWithSignal(context.Background(), sigs)); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }
 
-func Run(sigs chan os.Signal, opts ...Option) error {
+func ContextWithSignal(ctx context.Context, sigs chan os.Signal) context.Context {
+	ctx, cancel := context.WithCancel(ctx)
+
+	go func() {
+		select {
+		case <-sigs:
+			fmt.Println("Received signal, exiting...")
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	return ctx
+}
+
+func Run(ctx context.Context, opts ...Option) error {
 	var (
 		httpServerGracefulShutdownTimeout = 5 * time.Second
 
@@ -58,27 +73,21 @@ func Run(sigs chan os.Signal, opts ...Option) error {
 		listenErr <- httpServer.ListenAndServe()
 	}()
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to load SDK config, %v", err)
 	}
 
-	checks := make(chan struct{}, 1)
 	chkr := newChecker(cfg, opts...)
-
-	go func() {
-		for {
-			select {
-			case <-checks:
-				chkr.doCheck()
-			}
-		}
-	}()
+	checkCtx, checkCancel := context.WithCancel(ctx)
 
 	for {
 		select {
-		case <-sigs:
-			fmt.Println("Received signal, exiting...")
+		case <-ctx.Done():
+			fmt.Println("Context is canceled, exiting...")
+
+			// Stop the checker
+			checkCancel()
 
 			// Graceful shutdown
 			ctx, cancel := context.WithTimeout(context.Background(), httpServerGracefulShutdownTimeout)
@@ -94,10 +103,7 @@ func Run(sigs chan os.Signal, opts ...Option) error {
 
 			return nil
 		case <-time.After(1 * time.Second):
-			select {
-			case checks <- struct{}{}:
-			default:
-			}
+			chkr.doCheck(checkCtx)
 		}
 	}
 }
@@ -135,15 +141,18 @@ func newChecker(cfg aws.Config, opts ...Option) *checker {
 	return c
 }
 
-func (c *checker) doCheck() {
+func (c *checker) doCheck(ctx context.Context) {
 	// S3 GetObject
 	getStart := time.Now()
-	_, err := c.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+	_, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: &c.s3Bucket,
 		Key:    &c.s3Key,
 	})
 	getDuration := time.Since(getStart).Seconds()
-	if err != nil {
+	if ctx.Err() == context.Canceled {
+		log.Printf("context is canceled")
+		return
+	} else if err != nil {
 		log.Printf("failed to get object, %v", err)
 		requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
 	} else {
@@ -152,11 +161,14 @@ func (c *checker) doCheck() {
 
 	// DynamoDB Scan
 	dynamoStart := time.Now()
-	_, err = c.dynamoClient.Scan(context.Background(), &dynamodb.ScanInput{
+	_, err = c.dynamoClient.Scan(ctx, &dynamodb.ScanInput{
 		TableName: &c.dynamodbTable,
 	})
 	dynamoDuration := time.Since(dynamoStart).Seconds()
-	if err != nil {
+	if ctx.Err() == context.Canceled {
+		log.Printf("context is canceled")
+		return
+	} else if err != nil {
 		log.Printf("failed to get item, %v", err)
 		requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
 	} else {
@@ -165,11 +177,14 @@ func (c *checker) doCheck() {
 
 	// SQS ReceiveMessage
 	sqsStart := time.Now()
-	_, err = c.sqsClient.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+	_, err = c.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl: &c.sqsQueueURL,
 	})
 	sqsDuration := time.Since(sqsStart).Seconds()
-	if err != nil {
+	if ctx.Err() == context.Canceled {
+		log.Printf("context is canceled")
+		return
+	} else if err != nil {
 		log.Printf("failed to receive message, %v", err)
 		requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
 	} else {

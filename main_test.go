@@ -26,7 +26,7 @@ func TestSigint(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		runErr <- Run(sigs, func(c *checker) {
+		runErr <- Run(ContextWithSignal(ctx, sigs), func(c *checker) {
 			// Use localstack for S3
 			c.s3Opts = append(c.s3Opts, s3.WithEndpointResolverV2(localstack.S3EndpointResolver()))
 		})
