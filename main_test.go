@@ -98,6 +98,11 @@ func TestSigint(t *testing.T) {
 
 		require.Len(t, mm, 1)
 		require.Contains(t, mm, labels{"S3", "GetObject", "Success"})
+		require.NotContains(t, mm, labels{"S3", "GetObject", "Failure"})
+		require.NotContains(t, mm, labels{"DynamoDB", "Scan", "Success"})
+		require.NotContains(t, mm, labels{"DynamoDB", "Scan", "Failure"})
+		require.NotContains(t, mm, labels{"SQS", "ReceiveMessage", "Success"})
+		require.NotContains(t, mm, labels{"SQS", "ReceiveMessage", "Failure"})
 	case <-time.After(2 * time.Second):
 		// We assume that the server is expected to start and expose metrics within 2 seconds.
 		// Otherwise, we consider it as a failure, and you may need to fix the server implementation,
