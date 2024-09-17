@@ -35,3 +35,5 @@ jobs:
           #   operation error S3: CreateBucket, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: 346f5995-bbe8-41e2-be03-3a6ab0ad5edd, HostID: s9lzHYrFp76ZVxRcpX9+5cjAnEH2ROuNkd2BHfIa6UkFVdtjf5mKR3/eTPFvsiP/XV/VLi31234=, api error InternalError: exception while calling s3 with unknown operation: Unable to find operation for request to service s3: PUT /
           S3_BUCKET: mybucket
           S3_KEY: mykey
+          # This one is for setupDynamoDBTable in main_test
+          DYNAMODB_TABLE: mytable
