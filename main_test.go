@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -49,56 +50,48 @@ func TestSigint(t *testing.T) {
 	// Wait for the server to start exposing metrics
 	//
 
-	metrics := make(chan string, 1)
+	var (
+		okLabels = []labels{
+			{"S3", "GetObject", "Success"},
+			{"SQS", "ReceiveMessage", "Failure"},
+			{"DynamoDB", "Scan", "Failure"},
+		}
+
+		ngLabels = []labels{
+			{"S3", "GetObject", "Failure"},
+			{"SQS", "ReceiveMessage", "Success"},
+			{"DynamoDB", "Scan", "Success"},
+		}
+	)
+
+	metrics := make(chan map[labels]struct{}, 1)
 	go func() {
 		for {
 			time.Sleep(100 * time.Millisecond)
 			m := httpGetStr(t, "http://localhost:8080/metrics")
-			if strings.Contains(m, "aws_request_duration_seconds") {
-				metrics <- m
+			mm, err := parseMetrics(t, m)
+			if err != nil {
+				t.Logf("Error: %v", err)
+				continue
+			}
+
+			if len(mm) == len(okLabels) {
+				metrics <- mm
 				break
 			}
 		}
 	}()
 
 	select {
-	case m := <-metrics:
-		// m is the metrics in the Prometheus exposition format,
-		// expectedly containing the aws_request_duration_seconds metric.
-		// We can check the presence of any metric here, in any detail.
-
-		p := expfmt.TextParser{}
-		mf, err := p.TextToMetricFamilies(strings.NewReader(m))
-		require.NoError(t, err)
-
-		mt, ok := mf["aws_request_duration_seconds"]
-		require.True(t, ok)
-
-		type labels struct {
-			service, method, status string
+	case mm := <-metrics:
+		for _, l := range okLabels {
+			require.Contains(t, mm, l)
 		}
 
-		mm := make(map[labels]struct{})
-
-		for _, m := range mt.Metric {
-			t.Logf("Metric: %v", m)
-			var labels labels
-			for _, l := range m.Label {
-				switch *l.Name {
-				case "service":
-					labels.service = *l.Value
-				case "method":
-					labels.method = *l.Value
-				case "status":
-					labels.status = *l.Value
-				}
-			}
-			mm[labels] = struct{}{}
+		for _, l := range ngLabels {
+			require.NotContains(t, mm, l)
 		}
-
-		require.Len(t, mm, 1)
-		require.Contains(t, mm, labels{"S3", "GetObject", "Success"})
-	case <-time.After(2 * time.Second):
+	case <-time.After(3 * time.Second):
 		// We assume that the server is expected to start and expose metrics within 2 seconds.
 		// Otherwise, we consider it as a failure, and you may need to fix the server implementation,
 		// or you may need to increase the timeout if the runtime environment is soooo slow.
@@ -115,6 +108,41 @@ func TestSigint(t *testing.T) {
 		// Otherwise, we consider it as a failure, and you may need to fix the server implementation.
 		t.Fatal("timeout")
 	}
+}
+
+type labels struct {
+	service, method, status string
+}
+
+func parseMetrics(t *testing.T, m string) (map[labels]struct{}, error) {
+	p := expfmt.TextParser{}
+	mf, err := p.TextToMetricFamilies(strings.NewReader(m))
+	require.NoError(t, err)
+
+	mt, ok := mf["aws_request_duration_seconds"]
+	if !ok {
+		return nil, fmt.Errorf("metric family aws_request_duration_seconds not found")
+	}
+
+	mm := make(map[labels]struct{})
+
+	for _, m := range mt.Metric {
+		t.Logf("Metric: %v", m)
+		var labels labels
+		for _, l := range m.Label {
+			switch *l.Name {
+			case "service":
+				labels.service = *l.Value
+			case "method":
+				labels.method = *l.Value
+			case "status":
+				labels.status = *l.Value
+			}
+		}
+		mm[labels] = struct{}{}
+	}
+
+	return mm, nil
 }
 
 // Put s3 object for testing
