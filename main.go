@@ -119,6 +119,7 @@ type checker struct {
 	sqsQueueURL   string
 
 	s3Opts       []func(*s3.Options)
+	sqsOpts      []func(*sqs.Options)
 	dynamodbOpts []func(*dynamodb.Options)
 }
 
@@ -132,7 +133,7 @@ func newChecker(cfg aws.Config, opts ...Option) *checker {
 
 	c.s3Client = s3.NewFromConfig(cfg, c.s3Opts...)
 	c.dynamoClient = dynamodb.NewFromConfig(cfg, c.dynamodbOpts...)
-	c.sqsClient = sqs.NewFromConfig(cfg)
+	c.sqsClient = sqs.NewFromConfig(cfg, c.sqsOpts...)
 
 	c.s3Bucket = os.Getenv("S3_BUCKET")
 	c.s3Key = os.Getenv("S3_KEY")
