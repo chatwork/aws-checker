@@ -13,6 +13,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/cw-sakamoto/sample/localstack"
@@ -34,13 +36,16 @@ func TestSigint(t *testing.T) {
 	require.NoError(t, err)
 
 	s3EndpointResolver := localstack.S3EndpointResolver()
+	dynamodbEndpointResolver := localstack.DynamoDBEndpointResolver()
 
 	setupS3BucketAndObject(t, ctx, awsConfig, s3EndpointResolver)
+	setupDynamoDBTable(t, ctx, awsConfig, dynamodbEndpointResolver)
 
 	go func() {
 		runErr <- Run(ContextWithSignal(ctx, sigs), func(c *checker) {
-			// Use localstack for S3
+			// Use localstack for S3 and DynamoDB
 			c.s3Opts = append(c.s3Opts, s3.WithEndpointResolverV2(s3EndpointResolver))
+			c.dynamodbOpts = append(c.dynamodbOpts, dynamodb.WithEndpointResolverV2(dynamodbEndpointResolver))
 		})
 
 		cancel()
@@ -54,13 +59,13 @@ func TestSigint(t *testing.T) {
 		okLabels = []labels{
 			{"S3", "GetObject", "Success"},
 			{"SQS", "ReceiveMessage", "Failure"},
-			{"DynamoDB", "Scan", "Failure"},
+			{"DynamoDB", "Scan", "Success"},
 		}
 
 		ngLabels = []labels{
 			{"S3", "GetObject", "Failure"},
 			{"SQS", "ReceiveMessage", "Success"},
-			{"DynamoDB", "Scan", "Success"},
+			{"DynamoDB", "Scan", "Failure"},
 		}
 	)
 
@@ -183,6 +188,43 @@ func setupS3BucketAndObject(t *testing.T, ctx context.Context, awsConfig aws.Con
 		_, err := s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: &s3Bucket,
 			Key:    &s3Key,
+		})
+		if err != nil {
+			t.Logf("Error: %v", err)
+		}
+	})
+}
+
+func setupDynamoDBTable(t *testing.T, ctx context.Context, awsConfig aws.Config, dynamodbEndpointResolver dynamodb.EndpointResolverV2) {
+	dynamodbClient := dynamodb.NewFromConfig(awsConfig, dynamodb.WithEndpointResolverV2(dynamodbEndpointResolver))
+
+	// We assume that DYNAMODB_TABLE is set in the environment variables
+	// before running the tests.
+	dynamodbTable := os.Getenv("DYNAMODB_TABLE")
+
+	_, err := dynamodbClient.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: &dynamodbTable,
+		KeySchema: []dynamodbtypes.KeySchemaElement{
+			{
+				AttributeName: aws.String("id"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
+			},
+		},
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+			{
+				AttributeName: aws.String("id"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
+			},
+		},
+		ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(1),
+			WriteCapacityUnits: aws.Int64(1),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err = dynamodbClient.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{
+			TableName: &dynamodbTable,
 		})
 		if err != nil {
 			t.Logf("Error: %v", err)
