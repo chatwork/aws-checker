@@ -37,3 +37,5 @@ jobs:
           S3_KEY: mykey
           # This one is for setupDynamoDBTable in main_test
           DYNAMODB_TABLE: mytable
+          # This one is for setupSQSQueue in main_test
+          SQS_QUEUE_URL: https://sqs.ap-northeast-1.amazonaws.com/123456789012/myqueue

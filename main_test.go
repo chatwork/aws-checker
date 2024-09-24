@@ -17,6 +17,7 @@ import (
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/cw-sakamoto/sample/localstack"
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/require"
@@ -36,15 +37,24 @@ func TestSigint(t *testing.T) {
 	require.NoError(t, err)
 
 	s3EndpointResolver := localstack.S3EndpointResolver()
+	sqsEndpointResolver := localstack.SQSEndpointResolver()
 	dynamodbEndpointResolver := localstack.DynamoDBEndpointResolver()
 
 	setupS3BucketAndObject(t, ctx, awsConfig, s3EndpointResolver)
 	setupDynamoDBTable(t, ctx, awsConfig, dynamodbEndpointResolver)
 
+	preservedQueueURL := os.Getenv("SQS_QUEUE_URL")
+	queueURL := setupSQSQueue(t, ctx, awsConfig, sqsEndpointResolver)
+	os.Setenv("SQS_QUEUE_URL", queueURL)
+	defer func() {
+		os.Setenv("SQS_QUEUE_URL", preservedQueueURL)
+	}()
+
 	go func() {
 		runErr <- Run(ContextWithSignal(ctx, sigs), func(c *checker) {
 			// Use localstack for S3 and DynamoDB
 			c.s3Opts = append(c.s3Opts, s3.WithEndpointResolverV2(s3EndpointResolver))
+			c.sqsOpts = append(c.sqsOpts, sqs.WithEndpointResolverV2(sqsEndpointResolver))
 			c.dynamodbOpts = append(c.dynamodbOpts, dynamodb.WithEndpointResolverV2(dynamodbEndpointResolver))
 		})
 
@@ -58,13 +68,13 @@ func TestSigint(t *testing.T) {
 	var (
 		okLabels = []labels{
 			{"S3", "GetObject", "Success"},
-			{"SQS", "ReceiveMessage", "Failure"},
+			{"SQS", "ReceiveMessage", "Success"},
 			{"DynamoDB", "Scan", "Success"},
 		}
 
 		ngLabels = []labels{
 			{"S3", "GetObject", "Failure"},
-			{"SQS", "ReceiveMessage", "Success"},
+			{"SQS", "ReceiveMessage", "Failure"},
 			{"DynamoDB", "Scan", "Failure"},
 		}
 	)
@@ -193,6 +203,31 @@ func setupS3BucketAndObject(t *testing.T, ctx context.Context, awsConfig aws.Con
 			t.Logf("Error: %v", err)
 		}
 	})
+}
+
+func setupSQSQueue(t *testing.T, ctx context.Context, awsConfig aws.Config, sqsEndpointResolver sqs.EndpointResolverV2) string {
+	sqsClient := sqs.NewFromConfig(awsConfig, sqs.WithEndpointResolverV2(sqsEndpointResolver))
+
+	// We assume that SQS_QUEUE_URL is set in the environment variables
+	// before running the tests.
+	sqsQueueURL := os.Getenv("SQS_QUEUE_URL")
+	queueName := sqsQueueURL[strings.LastIndex(sqsQueueURL, "/")+1:]
+
+	res, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName: aws.String(queueName),
+	})
+	require.NoError(t, err)
+	sqsQueueURL = *res.QueueUrl
+	t.Cleanup(func() {
+		_, err = sqsClient.DeleteQueue(context.Background(), &sqs.DeleteQueueInput{
+			QueueUrl: &sqsQueueURL,
+		})
+		if err != nil {
+			t.Logf("Error: %v", err)
+		}
+	})
+
+	return sqsQueueURL
 }
 
 func setupDynamoDBTable(t *testing.T, ctx context.Context, awsConfig aws.Config, dynamodbEndpointResolver dynamodb.EndpointResolverV2) {
