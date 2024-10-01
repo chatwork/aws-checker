@@ -23,7 +23,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSigint(t *testing.T) {
+type testcase struct {
+	setupS3 bool
+
+	okLabels []labels
+	ngLabels []labels
+}
+
+func TestRun(t *testing.T) {
+	t.Run("ok", func(t *testing.T) {
+		checkRun(t, testcase{
+			setupS3: true,
+			okLabels: []labels{
+				{"S3", "GetObject", "Success"},
+				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "Scan", "Success"},
+			},
+			ngLabels: []labels{
+				{"S3", "GetObject", "Failure"},
+				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "Scan", "Failure"},
+			},
+		})
+	})
+
+	// The below fails like the below, due to the duplicate MustRegister call to the prometheus library:
+	//   panic: pattern "/metrics" (registered at /go/aws-checker/main.go:71) conflicts with pattern "/metrics" (registered at /go/aws-checker/main.go:71):
+	// t.Run("s3 failing", func(t *testing.T) {
+	// 	checkRun(t, testcase{
+	// 		setupS3: false,
+	// 		okLabels: []labels{
+	// 			{"S3", "GetObject", "Failure"},
+	// 			{"SQS", "ReceiveMessage", "Success"},
+	// 			{"DynamoDB", "Scan", "Success"},
+	// 		},
+	// 		ngLabels: []labels{
+	// 			{"S3", "GetObject", "Success"},
+	// 			{"SQS", "ReceiveMessage", "Failure"},
+	// 			{"DynamoDB", "Scan", "Failure"},
+	// 		},
+	// 	})
+	// })
+}
+
+func checkRun(t *testing.T, tc testcase) {
+	t.Helper()
+
 	var (
 		runErr = make(chan error, 1)
 
@@ -40,7 +85,10 @@ func TestSigint(t *testing.T) {
 	sqsEndpointResolver := localstack.SQSEndpointResolver()
 	dynamodbEndpointResolver := localstack.DynamoDBEndpointResolver()
 
-	setupS3BucketAndObject(t, ctx, awsConfig, s3EndpointResolver)
+	if tc.setupS3 {
+		setupS3BucketAndObject(t, ctx, awsConfig, s3EndpointResolver)
+	}
+
 	setupDynamoDBTable(t, ctx, awsConfig, dynamodbEndpointResolver)
 
 	preservedQueueURL := os.Getenv("SQS_QUEUE_URL")
@@ -65,20 +113,6 @@ func TestSigint(t *testing.T) {
 	// Wait for the server to start exposing metrics
 	//
 
-	var (
-		okLabels = []labels{
-			{"S3", "GetObject", "Success"},
-			{"SQS", "ReceiveMessage", "Success"},
-			{"DynamoDB", "Scan", "Success"},
-		}
-
-		ngLabels = []labels{
-			{"S3", "GetObject", "Failure"},
-			{"SQS", "ReceiveMessage", "Failure"},
-			{"DynamoDB", "Scan", "Failure"},
-		}
-	)
-
 	metrics := make(chan map[labels]struct{}, 1)
 	go func() {
 		for {
@@ -90,7 +124,7 @@ func TestSigint(t *testing.T) {
 				continue
 			}
 
-			if len(mm) == len(okLabels) {
+			if len(mm) == len(tc.okLabels) {
 				metrics <- mm
 				break
 			}
@@ -99,11 +133,11 @@ func TestSigint(t *testing.T) {
 
 	select {
 	case mm := <-metrics:
-		for _, l := range okLabels {
+		for _, l := range tc.okLabels {
 			require.Contains(t, mm, l)
 		}
 
-		for _, l := range ngLabels {
+		for _, l := range tc.ngLabels {
 			require.NotContains(t, mm, l)
 		}
 	case <-time.After(3 * time.Second):
