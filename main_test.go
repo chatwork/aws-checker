@@ -47,23 +47,21 @@ func TestRun(t *testing.T) {
 		})
 	})
 
-	// The below fails like the below, due to the duplicate MustRegister call to the prometheus library:
-	//   panic: pattern "/metrics" (registered at /go/aws-checker/main.go:71) conflicts with pattern "/metrics" (registered at /go/aws-checker/main.go:71):
-	// t.Run("s3 failing", func(t *testing.T) {
-	// 	checkRun(t, testcase{
-	// 		setupS3: false,
-	// 		okLabels: []labels{
-	// 			{"S3", "GetObject", "Failure"},
-	// 			{"SQS", "ReceiveMessage", "Success"},
-	// 			{"DynamoDB", "Scan", "Success"},
-	// 		},
-	// 		ngLabels: []labels{
-	// 			{"S3", "GetObject", "Success"},
-	// 			{"SQS", "ReceiveMessage", "Failure"},
-	// 			{"DynamoDB", "Scan", "Failure"},
-	// 		},
-	// 	})
-	// })
+	t.Run("s3 failing", func(t *testing.T) {
+		checkRun(t, testcase{
+			setupS3: false,
+			okLabels: []labels{
+				{"S3", "GetObject", "Failure"},
+				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "Scan", "Success"},
+			},
+			ngLabels: []labels{
+				{"S3", "GetObject", "Success"},
+				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "Scan", "Failure"},
+			},
+		})
+	})
 }
 
 func checkRun(t *testing.T, tc testcase) {

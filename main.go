@@ -19,21 +19,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var (
-	requestDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "aws_request_duration_seconds",
-			Help:    "Time spent in requests for aws.",
-			Buckets: prometheus.ExponentialBuckets(0.01, 2, 10),
-		},
-		[]string{"service", "method", "status"},
-	)
-)
-
-func init() {
-	prometheus.MustRegister(requestDuration)
-}
-
 func main() {
 	// Create a channel to receive OS signals
 	sigs := make(chan os.Signal, 1)
@@ -62,13 +47,41 @@ func ContextWithSignal(ctx context.Context, sigs chan os.Signal) context.Context
 
 func Run(ctx context.Context, opts ...Option) error {
 	var (
+		requestDuration = prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "aws_request_duration_seconds",
+				Help:    "Time spent in requests for aws.",
+				Buckets: prometheus.ExponentialBuckets(0.01, 2, 10),
+			},
+			[]string{"service", "method", "status"},
+		)
+
+		registry = prometheus.NewRegistry()
+
 		httpServerGracefulShutdownTimeout = 5 * time.Second
 
-		httpServer = &http.Server{Addr: ":8080"}
-		listenErr  = make(chan error, 1)
+		httpMux    = http.NewServeMux()
+		httpServer = &http.Server{
+			Addr:    ":8080",
+			Handler: httpMux,
+		}
+		listenErr = make(chan error, 1)
 	)
 
-	http.Handle("/metrics", promhttp.Handler())
+	registry.MustRegister(requestDuration)
+	defer func() {
+		if ok := registry.Unregister(requestDuration); !ok {
+			log.Printf("failed to unregister requestDuration: it was not registered")
+		}
+	}()
+
+	// This is the same as getting the default handler using promhttp.Handler()
+	// but with our own registry instead of the promhttp's default registry.
+	promHttpHandler := promhttp.InstrumentMetricHandler(
+		registry, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}),
+	)
+
+	httpMux.Handle("/metrics", promHttpHandler)
 	go func() {
 		listenErr <- httpServer.ListenAndServe()
 	}()
@@ -78,7 +91,7 @@ func Run(ctx context.Context, opts ...Option) error {
 		return fmt.Errorf("unable to load SDK config, %v", err)
 	}
 
-	chkr := newChecker(cfg, opts...)
+	chkr := newChecker(cfg, requestDuration, opts...)
 	checkCtx, checkCancel := context.WithCancel(ctx)
 
 	for {
@@ -109,6 +122,8 @@ func Run(ctx context.Context, opts ...Option) error {
 }
 
 type checker struct {
+	requestDuration *prometheus.HistogramVec
+
 	s3Client     *s3.Client
 	dynamoClient *dynamodb.Client
 	sqsClient    *sqs.Client
@@ -125,11 +140,13 @@ type checker struct {
 
 type Option func(*checker)
 
-func newChecker(cfg aws.Config, opts ...Option) *checker {
+func newChecker(cfg aws.Config, requestDuration *prometheus.HistogramVec, opts ...Option) *checker {
 	c := &checker{}
 	for _, opt := range opts {
 		opt(c)
 	}
+
+	c.requestDuration = requestDuration
 
 	c.s3Client = s3.NewFromConfig(cfg, c.s3Opts...)
 	c.dynamoClient = dynamodb.NewFromConfig(cfg, c.dynamodbOpts...)
@@ -156,9 +173,9 @@ func (c *checker) doCheck(ctx context.Context) {
 		return
 	} else if err != nil {
 		log.Printf("failed to get object, %v", err)
-		requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
+		c.requestDuration.WithLabelValues("S3", "GetObject", "Failure").Observe(getDuration)
 	} else {
-		requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
+		c.requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
 	}
 
 	// DynamoDB Scan
@@ -172,9 +189,9 @@ func (c *checker) doCheck(ctx context.Context) {
 		return
 	} else if err != nil {
 		log.Printf("failed to get item, %v", err)
-		requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
+		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
 	} else {
-		requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
+		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
 	}
 
 	// SQS ReceiveMessage
@@ -188,8 +205,8 @@ func (c *checker) doCheck(ctx context.Context) {
 		return
 	} else if err != nil {
 		log.Printf("failed to receive message, %v", err)
-		requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
+		c.requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
 	} else {
-		requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
+		c.requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
 	}
 }
