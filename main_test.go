@@ -25,6 +25,7 @@ import (
 
 type testcase struct {
 	setupS3  bool
+	setupDDB bool
 	setupSQS bool
 
 	okLabels []labels
@@ -35,6 +36,7 @@ func TestRun(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
 		checkRun(t, testcase{
 			setupS3:  true,
+			setupDDB: true,
 			setupSQS: true,
 			okLabels: []labels{
 				{"S3", "GetObject", "Success"},
@@ -52,6 +54,7 @@ func TestRun(t *testing.T) {
 	t.Run("s3 failing", func(t *testing.T) {
 		checkRun(t, testcase{
 			setupS3:  false,
+			setupDDB: true,
 			setupSQS: true,
 			okLabels: []labels{
 				{"S3", "GetObject", "Failure"},
@@ -69,6 +72,7 @@ func TestRun(t *testing.T) {
 	t.Run("sqs failing", func(t *testing.T) {
 		checkRun(t, testcase{
 			setupS3:  true,
+			setupDDB: true,
 			setupSQS: false,
 			okLabels: []labels{
 				{"S3", "GetObject", "Success"},
@@ -79,6 +83,24 @@ func TestRun(t *testing.T) {
 				{"S3", "GetObject", "Failure"},
 				{"SQS", "ReceiveMessage", "Success"},
 				{"DynamoDB", "Scan", "Failure"},
+			},
+		})
+	})
+
+	t.Run("DynamoDB failing", func(t *testing.T) {
+		checkRun(t, testcase{
+			setupS3:  true,
+			setupDDB: false,
+			setupSQS: true,
+			okLabels: []labels{
+				{"S3", "GetObject", "Success"},
+				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "Scan", "Failure"},
+			},
+			ngLabels: []labels{
+				{"S3", "GetObject", "Failure"},
+				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "Scan", "Success"},
 			},
 		})
 	})
@@ -107,7 +129,9 @@ func checkRun(t *testing.T, tc testcase) {
 		setupS3BucketAndObject(t, ctx, awsConfig, s3EndpointResolver)
 	}
 
-	setupDynamoDBTable(t, ctx, awsConfig, dynamodbEndpointResolver)
+	if tc.setupDDB {
+		setupDynamoDBTable(t, ctx, awsConfig, dynamodbEndpointResolver)
+	}
 
 	if tc.setupSQS {
 		preservedQueueURL := os.Getenv("SQS_QUEUE_URL")
