@@ -20,6 +20,8 @@ jobs:
         with:
           image-tag: 'latest'
           install-awslocal: 'true'
+      - name: Bump Go versions in go.mod and workflows if necessary
+        run: go run ./tools/syncgover
       - name: Run tests
         run: go test -v ./...
         env:
@@ -39,6 +41,11 @@ jobs:
           DYNAMODB_TABLE: mytable
           # This one is for setupSQSQueue in main_test
           SQS_QUEUE_URL: https://sqs.ap-northeast-1.amazonaws.com/123456789012/myqueue
+      - name: Push code changes back to the repository
+        run: |
+          if ! git diff --exit-code; then
+            git push
+          fi
   goreleaser:
     runs-on: ubuntu-latest
     steps:
