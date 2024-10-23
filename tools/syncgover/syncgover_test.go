@@ -23,7 +23,13 @@ func TestSyncgover(t *testing.T) {
 
 	require.NoError(t, syncGoVer(localRepoPath))
 
+	// We compare the output against the snapshot,
+	// so that Dockerfile is unchanged, while GitHub Actions workflow files are updated.
 	compareAgainstSnapshot(t, localRepoPath, filepath.Join("testdata", "output"))
+	// We also ensure that the `go` version in the `go.mod` file is updated.
+	// This is not covered by the snapshot comparison, because `go mod tidy`
+	// may change the `go.mod` file in an unpredictable way.
+	// Example: https://github.com/golang/go/issues/65847
 	ensureGoModGoVersion(t, localRepoPath, "1.22")
 }
 
