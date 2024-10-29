@@ -23,6 +23,10 @@ jobs:
         with:
           image-tag: 'latest'
           install-awslocal: 'true'
+      - name: Set up Git user
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "aws-checker@@users.noreply.github.com"
       - name: Bump Go versions in go.mod and workflows if necessary
         run: go run ./tools/syncgover
       - name: Run tests
