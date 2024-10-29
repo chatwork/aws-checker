@@ -91,7 +91,7 @@ func syncGoVer(wd string) error {
 		return nil
 	}
 
-	// git add/commit/push the changes
+	// git add and commit the changes
 	if err := runCommand(wd, "git", "add", "-u"); err != nil {
 		return fmt.Errorf("could not git add the changes: %w", err)
 	}

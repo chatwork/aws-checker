@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      # This is required to push changes back to the repository
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
