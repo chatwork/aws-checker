@@ -47,7 +47,7 @@ jobs:
       - name: Push code changes back to the repository
         run: |
           if ! git diff --exit-code; then
-            git push
+            git push || echo "Unable to push changes"
           fi
   goreleaser:
     runs-on: ubuntu-latest
