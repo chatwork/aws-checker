@@ -103,7 +103,7 @@ func syncGoVer(wd string) error {
 		return fmt.Errorf("could not git add the changes: %w", err)
 	}
 
-	if err := runCommand(wd, "git", "commit", "-m", "Update the `go` version in the `go.mod` file and GitHub Actions workflow file(s)"); err != nil {
+	if err := runCommand(wd, "git", "commit", "-m", "Update Go versions according to Dockerfile"); err != nil {
 		return fmt.Errorf("could not git commit the changes: %w", err)
 	}
 
