@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,8 @@ func syncGoVer(wd string) error {
 		return fmt.Errorf("could not read the Go version from the Dockerfile: %w", err)
 	}
 
+	log.Printf("Go image tag in the Dockerfile: %s", goVersion)
+
 	major := strings.Split(goVersion, ".")[0]
 	minor := strings.Split(goVersion, ".")[1]
 	minorInt, err := strconv.Atoi(minor)
@@ -58,6 +61,8 @@ func syncGoVer(wd string) error {
 		return fmt.Errorf("could not convert the minor version to an integer: %w", err)
 	}
 	oneMinusMinor := fmt.Sprintf("%s.%d", major, minorInt-1)
+
+	log.Printf("Go version in the go.mod file will be updated to: %s", oneMinusMinor)
 
 	// Update the `go` version in the `go.mod` file.
 	// Note that we don't pass `"-go", goVersion`, because it can only set up to the version of the go command
@@ -75,6 +80,8 @@ func syncGoVer(wd string) error {
 		if info.IsDir() {
 			return nil
 		}
+
+		log.Printf("Updating the `go` version in the GitHub Actions workflow file: %s", path)
 
 		// Update the `go` version in the GitHub Actions workflow file.
 		if err := replaceGoVersioninWorkflow(path, goVersion); err != nil {
