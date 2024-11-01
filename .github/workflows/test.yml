@@ -16,7 +16,7 @@ jobs:
         with:
           go-version: 1.22
       - name: Start LocalStack
-        uses: LocalStack/setup-localstack@v0.2.2
+        uses: LocalStack/setup-localstack@v0.2.3
         with:
           image-tag: 'latest'
           install-awslocal: 'true'
