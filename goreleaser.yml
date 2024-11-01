@@ -1,0 +1,57 @@
+project_name: aws-checker
+env:
+builds:
+  - id: aws-checker
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+changelog:
+  use: github-native
+
+release:
+  prerelease: auto
+
+dockers:
+  # https://goreleaser.com/customization/docker/
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:canary-amd64"
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:v{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version=v{{.Version}}"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:canary-arm64"
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:v{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version=v{{.Version}}"
+
+docker_manifests:
+  - name_template: "{{ .Env.REGISTRY }}/{{ .ProjectName }}:canary"
+    image_templates:
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:canary-amd64"
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:canary-arm64"
+  - name_template: "{{ .Env.REGISTRY }}/{{ .ProjectName }}:v{{ .Version }}"
+    image_templates:
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:v{{ .Version }}-amd64"
+      - "{{ .Env.REGISTRY }}/{{ .ProjectName }}:v{{ .Version }}-arm64"

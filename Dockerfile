@@ -1,14 +1,10 @@
-FROM golang:1.22
-WORKDIR /app
+FROM gcr.io/distroless/static-debian12
 
-COPY go.mod ./
-COPY go.sum ./
-RUN go mod download
+ARG TARGETOS
+ARG TARGETARCH
 
-COPY *.go ./
-RUN go mod download
-RUN CGO_ENABLED=0 go build -o /aws-checker
+COPY aws-checker /usr/local/bin/aws-checker
 
 EXPOSE 8080
 
-CMD ["/aws-checker"]
+CMD ["/usr/local/bin/aws-checker"]
