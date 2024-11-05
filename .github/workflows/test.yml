@@ -49,4 +49,5 @@ jobs:
           go-version: 1.22
       - name: Goreleaser image building test
         uses: goreleaser/goreleaser-action@v6
-        args: release --snapshot
+        with:
+          args: release --snapshot
