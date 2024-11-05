@@ -116,7 +116,7 @@ func ensureGoModGoVersion(t *testing.T, localRepoPath, want string) {
 	require.NoError(t, err)
 	goVersion, err := readGoVersionFromGoMod(string(goModFileContent))
 	require.NoError(t, err)
-	require.Equal(t, "1.22", goVersion)
+	require.Equal(t, want, goVersion)
 }
 
 func readGoVersionFromGoMod(content string) (string, error) {
