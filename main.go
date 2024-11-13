@@ -19,13 +19,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+var Version = "dev"
+
 func main() {
+	opts, code := parseFlags(os.Args[1:])
+	if code != nil {
+		os.Exit(*code)
+	}
+
 	// Create a channel to receive OS signals
 	sigs := make(chan os.Signal, 1)
 	// Register the channel to receive SIGINT, SIGTERM signals
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	if err := Run(ContextWithSignal(context.Background(), sigs)); err != nil {
+	if err := Run(ContextWithSignal(context.Background(), sigs), opts...); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

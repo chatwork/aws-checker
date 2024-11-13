@@ -65,3 +65,5 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           args: release --snapshot
+      - name: Verify docker images working
+        run: docker run --rm ghcr.io/chatwork/aws-checker:canary-amd64 aws-checker version
