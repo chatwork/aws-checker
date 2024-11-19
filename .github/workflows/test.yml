@@ -7,8 +7,21 @@ on:
       - main
 
 jobs:
-  test:
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      release-go-version: ${{ steps.set.outputs.release-go-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - id: set
+        run: go run ./tools/setghaoutputs | tee -a "$GITHUB_OUTPUT"
+  test:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{fromJson(needs.setup.outputs.matrix)}}
     permissions:
       # This is required to push changes back to the repository
       contents: write
@@ -17,18 +30,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22
+          go-version: ${{ matrix.go-version }}
       - name: Start LocalStack
         uses: LocalStack/setup-localstack@v0.2.2
         with:
           image-tag: 'latest'
           install-awslocal: 'true'
-      - name: Set up Git user
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "aws-checker@@users.noreply.github.com"
-      - name: Bump Go versions in go.mod and workflows if necessary
-        run: go run ./tools/syncgover
       - name: Run tests
         run: go test -v ./...
         env:
@@ -48,19 +55,15 @@ jobs:
           DYNAMODB_TABLE: mytable
           # This one is for setupSQSQueue in main_test
           SQS_QUEUE_URL: https://sqs.ap-northeast-1.amazonaws.com/123456789012/myqueue
-      - name: Push code changes back to the repository
-        if: github.event_name == 'pull_request'
-        run: |
-          echo Pushing changes to ${GITHUB_HEAD_REF}
-          git push origin HEAD:${GITHUB_HEAD_REF} || echo "Unable to push changes"
   goreleaser:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22
+          go-version: ${{ needs.setup.outputs.release-go-version }}
       - name: Goreleaser image building test
         uses: goreleaser/goreleaser-action@v6
         with:
