@@ -10,7 +10,17 @@ permissions:
   packages: write
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      release-go-version: ${{ steps.set.outputs.release-go-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - id: set
+        run: go run ./tools/setghaoutputs | tee -a "$GITHUB_OUTPUT"
   goreleaser:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +28,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: 1.22
+          go-version: ${{ needs.setup.outputs.release-go-version }}
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
