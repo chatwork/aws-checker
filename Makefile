@@ -1,5 +1,3 @@
-GOLANGCI_LINT_VERSION=1.56.2
-
 GO_BUILD_VERSION_LDFLAGS=-X main.Version=$(shell git rev-parse --short HEAD)
 
 .PHONY: build
@@ -8,7 +6,7 @@ build:
 
 .PHONY: lint
 lint:
-	docker run --rm -v $(shell pwd):/app -v ~/.cache/golangci-lint/v$(GOLANGCI_LINT_VERSION):/root/.cache -w /app golangci/golangci-lint:v$(GOLANGCI_LINT_VERSION) golangci-lint run -v --timeout=5m
+	docker run --rm -v $(shell pwd):/app -v ~/.cache/golangci-lint/aws-checker:/root/.cache -w /app golangci/golangci-lint:latest golangci-lint run -v --timeout=5m
 
 .PHONY: test
 test:
