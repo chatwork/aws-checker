@@ -202,7 +202,8 @@ LOOP:
 	}
 
 	if len(commits) == 0 {
-		return nil, fmt.Errorf("no new commits found since tag %s", *tag.Name)
+		log.Printf("no new commits found since tag %s", *tag.Name)
+		return nil, nil
 	}
 
 	slices.Reverse(commits)
