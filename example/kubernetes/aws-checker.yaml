@@ -1,0 +1,88 @@
+# This is an example Kubernetes deployment for aws-checker.
+# It exposes a Prometheus metrics endpoint on port 8080 for scraping from Datadog Agent.
+apiVersion: datadoghq.com/v2alpha1
+kind: DatadogAgent
+metadata:
+  name: datadog
+spec:
+  global:
+    credentials:
+      apiSecret:
+        secretName: datadog-secret
+        keyName: api-key
+  features:
+    prometheusScrape:
+      enabled: true
+      enableServiceEndpoints: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aws-checker
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-checker
+  labels:
+    app: aws-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aws-checker
+  template:
+    metadata:
+      labels:
+        app: aws-checker
+      annotations:
+         prometheus.io/scrape: "true"
+         ad.datadoghq.com/aws-checker.checks: |
+           {
+             "openmetrics": {
+               "instances": [
+                 {
+                   "openmetrics_endpoint": "http://%%host%%:%%port%%/metrics",
+                   "namespace": "aws-checker-example",
+                   "metrics": [
+                       "aws_request_duration_seconds"
+                     ]
+                 }
+               ]
+             }
+           }
+    spec:
+      serviceAccountName: aws-checker
+      containers:
+      - name: aws-checker
+        image: ghcr.io/chatwork/aws-checker:canary-amd64
+        ports:
+        - containerPort: 8080
+        env:
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: aws-checker
+              key: AWS_REGION
+        - name: S3_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: aws-checker
+              key: S3_BUCKET
+        - name: S3_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: aws-checker
+              key: S3_KEY
+        - name: DYNAMODB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-checker
+              key: DYNAMODB_TABLE
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-checker
+              key: SQS_QUEUE_URL
+
