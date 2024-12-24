@@ -5,17 +5,20 @@ on:
     # Run every day at 4:30 UTC = 13:30 JST
     - cron: '30 4 * * *'
 
-permissions:
-  contents: write
-
 jobs:
   auto_patch_release:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Generate a token
+      id: generate-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ vars.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
     - uses: actions/setup-go@v5
     - run: |
         cd ./tools/autotagpatch
         go run .
       env: 
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
