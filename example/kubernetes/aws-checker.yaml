@@ -46,8 +46,9 @@ spec:
                    "openmetrics_endpoint": "http://%%host%%:%%port%%/metrics",
                    "namespace": "aws-checker-example",
                    "metrics": [
-                       "aws_request_duration_seconds"
-                     ]
+                     "aws_request_duration_seconds"
+                   ],
+                   "collect_counters_with_distributions": true
                  }
                ]
              }
