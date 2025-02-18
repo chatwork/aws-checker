@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/prometheus/client_golang/prometheus"
@@ -201,6 +202,12 @@ func (c *checker) doCheck(ctx context.Context) {
 		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
 	}
 
+	c.doCheckDynamoDB(ctx)
+	if ctx.Err() == context.Canceled {
+		log.Printf("context is canceled")
+		return
+	}
+
 	// SQS ReceiveMessage
 	sqsStart := time.Now()
 	_, err = c.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
@@ -215,5 +222,150 @@ func (c *checker) doCheck(ctx context.Context) {
 		c.requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Failure").Observe(sqsDuration)
 	} else {
 		c.requestDuration.WithLabelValues("SQS", "ReceiveMessage", "Success").Observe(sqsDuration)
+	}
+}
+
+type operation struct {
+	method    string
+	operation func() error
+}
+
+func (c *checker) doCheckDynamoDB(ctx context.Context) {
+	c.doCheckService(ctx, "DynamoDB", []operation{
+		{
+			method: "PutItem",
+			operation: func() error {
+				_, err := c.dynamoClient.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: &c.dynamodbTable,
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						"data": &dynamodbtypes.AttributeValueMemberS{Value: "test-data"},
+					},
+				})
+				return err
+			},
+		},
+		{
+			method: "UpdateItem",
+			operation: func() error {
+				_, err := c.dynamoClient.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: &c.dynamodbTable,
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+					UpdateExpression: aws.String("SET #data = :data"),
+					ExpressionAttributeNames: map[string]string{
+						"#data": "data",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":data": &dynamodbtypes.AttributeValueMemberS{Value: "updated-data"},
+					},
+				})
+				return err
+			},
+		},
+		{
+			method: "DeleteItem",
+			operation: func() error {
+				_, err := c.dynamoClient.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+					TableName: &c.dynamodbTable,
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+				})
+				return err
+			},
+		},
+		{
+			method: "GetItem",
+			operation: func() error {
+				_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName: &c.dynamodbTable,
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+				})
+				return err
+			},
+		},
+		{
+			method: "GetItemConsistent",
+			operation: func() error {
+				_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName: &c.dynamodbTable,
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+					ConsistentRead: aws.Bool(true),
+				})
+				return err
+			},
+		},
+		{
+			method: "Query",
+			operation: func() error {
+				_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
+					TableName:              &c.dynamodbTable,
+					KeyConditionExpression: aws.String("id = :id"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+				})
+				return err
+			},
+		},
+		{
+			method: "QueryConsistent",
+			operation: func() error {
+				_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
+					TableName:              &c.dynamodbTable,
+					KeyConditionExpression: aws.String("id = :id"),
+					ConsistentRead:         aws.Bool(true),
+				})
+				return err
+			},
+		},
+		{
+			method: "PutGetItemConsistent",
+			operation: func() error {
+				_, err := c.dynamoClient.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: &c.dynamodbTable,
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						"data": &dynamodbtypes.AttributeValueMemberS{Value: "test-data"},
+					},
+				})
+				if err != nil {
+					return err
+				}
+
+				_, err = c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName: &c.dynamodbTable,
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+					ConsistentRead: aws.Bool(true),
+				})
+				return err
+			},
+		},
+	})
+}
+
+func (c *checker) doCheckService(ctx context.Context, service string, operations []operation) {
+	for _, op := range operations {
+		start := time.Now()
+		err := op.operation()
+		duration := time.Since(start).Seconds()
+
+		if ctx.Err() == context.Canceled {
+			log.Printf("context is canceled")
+			return
+		} else if err != nil {
+			log.Printf("failed to %s, %v", op.method, err)
+			c.requestDuration.WithLabelValues(service, op.method, "Failure").Observe(duration)
+		} else {
+			c.requestDuration.WithLabelValues(service, op.method, "Success").Observe(duration)
+		}
 	}
 }
