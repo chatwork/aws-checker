@@ -186,22 +186,7 @@ func (c *checker) doCheck(ctx context.Context) {
 		c.requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
 	}
 
-	// DynamoDB Scan
-	dynamoStart := time.Now()
-	_, err = c.dynamoClient.Scan(ctx, &dynamodb.ScanInput{
-		TableName: &c.dynamodbTable,
-	})
-	dynamoDuration := time.Since(dynamoStart).Seconds()
-	if ctx.Err() == context.Canceled {
-		log.Printf("context is canceled")
-		return
-	} else if err != nil {
-		log.Printf("failed to get item, %v", err)
-		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
-	} else {
-		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
-	}
-
+	// DynamoDB Operations
 	c.doCheckDynamoDB(ctx)
 	if ctx.Err() == context.Canceled {
 		log.Printf("context is canceled")
@@ -232,6 +217,15 @@ type operation struct {
 
 func (c *checker) doCheckDynamoDB(ctx context.Context) {
 	c.doCheckService(ctx, "DynamoDB", []operation{
+		{
+			method: "Scan",
+			operation: func() error {
+				_, err := c.dynamoClient.Scan(ctx, &dynamodb.ScanInput{
+					TableName: &c.dynamodbTable,
+				})
+				return err
+			},
+		},
 		{
 			method: "PutItem",
 			operation: func() error {
