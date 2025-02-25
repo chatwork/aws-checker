@@ -212,6 +212,7 @@ func checkRun(t *testing.T, tc testcase) {
 			c.s3Opts = append(c.s3Opts, s3.WithEndpointResolverV2(s3EndpointResolver))
 			c.sqsOpts = append(c.sqsOpts, sqs.WithEndpointResolverV2(sqsEndpointResolver))
 			c.dynamodbOpts = append(c.dynamodbOpts, dynamodb.WithEndpointResolverV2(dynamodbEndpointResolver))
+			c.awsAPICallInterval = 1 * time.Millisecond
 		})
 
 		cancel()
