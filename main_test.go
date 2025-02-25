@@ -41,12 +41,28 @@ func TestRun(t *testing.T) {
 			okLabels: []labels{
 				{"S3", "GetObject", "Success"},
 				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "DeleteItem", "Success"},
+				{"DynamoDB", "GetItem", "Success"},
+				{"DynamoDB", "GetItemConsistent", "Success"},
+				{"DynamoDB", "PutGetItemConsistent", "Success"},
+				{"DynamoDB", "PutItem", "Success"},
+				{"DynamoDB", "Query", "Success"},
+				{"DynamoDB", "QueryConsistent", "Success"},
 				{"DynamoDB", "Scan", "Success"},
+				{"DynamoDB", "UpdateItem", "Success"},
 			},
 			ngLabels: []labels{
 				{"S3", "GetObject", "Failure"},
 				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "DeleteItem", "Failure"},
+				{"DynamoDB", "GetItem", "Failure"},
+				{"DynamoDB", "GetItemConsistent", "Failure"},
+				{"DynamoDB", "PutGetItemConsistent", "Failure"},
+				{"DynamoDB", "PutItem", "Failure"},
+				{"DynamoDB", "Query", "Failure"},
+				{"DynamoDB", "QueryConsistent", "Failure"},
 				{"DynamoDB", "Scan", "Failure"},
+				{"DynamoDB", "UpdateItem", "Failure"},
 			},
 		})
 	})
@@ -59,12 +75,28 @@ func TestRun(t *testing.T) {
 			okLabels: []labels{
 				{"S3", "GetObject", "Failure"},
 				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "DeleteItem", "Success"},
+				{"DynamoDB", "GetItem", "Success"},
+				{"DynamoDB", "GetItemConsistent", "Success"},
+				{"DynamoDB", "PutGetItemConsistent", "Success"},
+				{"DynamoDB", "PutItem", "Success"},
+				{"DynamoDB", "Query", "Success"},
+				{"DynamoDB", "QueryConsistent", "Success"},
 				{"DynamoDB", "Scan", "Success"},
+				{"DynamoDB", "UpdateItem", "Success"},
 			},
 			ngLabels: []labels{
 				{"S3", "GetObject", "Success"},
 				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "DeleteItem", "Failure"},
+				{"DynamoDB", "GetItem", "Failure"},
+				{"DynamoDB", "GetItemConsistent", "Failure"},
+				{"DynamoDB", "PutGetItemConsistent", "Failure"},
+				{"DynamoDB", "PutItem", "Failure"},
+				{"DynamoDB", "Query", "Failure"},
+				{"DynamoDB", "QueryConsistent", "Failure"},
 				{"DynamoDB", "Scan", "Failure"},
+				{"DynamoDB", "UpdateItem", "Failure"},
 			},
 		})
 	})
@@ -77,12 +109,28 @@ func TestRun(t *testing.T) {
 			okLabels: []labels{
 				{"S3", "GetObject", "Success"},
 				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "DeleteItem", "Success"},
+				{"DynamoDB", "GetItem", "Success"},
+				{"DynamoDB", "GetItemConsistent", "Success"},
+				{"DynamoDB", "PutGetItemConsistent", "Success"},
+				{"DynamoDB", "PutItem", "Success"},
+				{"DynamoDB", "Query", "Success"},
+				{"DynamoDB", "QueryConsistent", "Success"},
 				{"DynamoDB", "Scan", "Success"},
+				{"DynamoDB", "UpdateItem", "Success"},
 			},
 			ngLabels: []labels{
 				{"S3", "GetObject", "Failure"},
 				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "DeleteItem", "Failure"},
+				{"DynamoDB", "GetItem", "Failure"},
+				{"DynamoDB", "GetItemConsistent", "Failure"},
+				{"DynamoDB", "PutGetItemConsistent", "Failure"},
+				{"DynamoDB", "PutItem", "Failure"},
+				{"DynamoDB", "Query", "Failure"},
+				{"DynamoDB", "QueryConsistent", "Failure"},
 				{"DynamoDB", "Scan", "Failure"},
+				{"DynamoDB", "UpdateItem", "Failure"},
 			},
 		})
 	})
@@ -95,12 +143,28 @@ func TestRun(t *testing.T) {
 			okLabels: []labels{
 				{"S3", "GetObject", "Success"},
 				{"SQS", "ReceiveMessage", "Success"},
+				{"DynamoDB", "DeleteItem", "Failure"},
+				{"DynamoDB", "GetItem", "Failure"},
+				{"DynamoDB", "GetItemConsistent", "Failure"},
+				{"DynamoDB", "PutGetItemConsistent", "Failure"},
+				{"DynamoDB", "PutItem", "Failure"},
+				{"DynamoDB", "Query", "Failure"},
+				{"DynamoDB", "QueryConsistent", "Failure"},
 				{"DynamoDB", "Scan", "Failure"},
+				{"DynamoDB", "UpdateItem", "Failure"},
 			},
 			ngLabels: []labels{
 				{"S3", "GetObject", "Failure"},
 				{"SQS", "ReceiveMessage", "Failure"},
+				{"DynamoDB", "DeleteItem", "Success"},
+				{"DynamoDB", "GetItem", "Success"},
+				{"DynamoDB", "GetItemConsistent", "Success"},
+				{"DynamoDB", "PutGetItemConsistent", "Success"},
+				{"DynamoDB", "PutItem", "Success"},
+				{"DynamoDB", "Query", "Success"},
+				{"DynamoDB", "QueryConsistent", "Success"},
 				{"DynamoDB", "Scan", "Success"},
+				{"DynamoDB", "UpdateItem", "Success"},
 			},
 		})
 	})
@@ -153,26 +217,66 @@ func checkRun(t *testing.T, tc testcase) {
 		cancel()
 	}()
 
+	// Note that we don't propagate `ctx` to `waitCtx`
+	// because we want to wait for the server to start
+	// exposing metrics even if the context is canceled.
+	//
+	// In other words, propagating `ctx` to `waitCtx` results in
+	// httpGetStr always reporting `connection refused` in case of timeout,
+	// which is not what we want.
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer waitCancel()
+
 	//
 	// Wait for the server to start exposing metrics
 	//
 
+	type errorInfo struct {
+		err     error
+		metrics map[labels]struct{}
+	}
+
+	var (
+		errorInfoCh = make(chan errorInfo, 1)
+	)
+
 	metrics := make(chan map[labels]struct{}, 1)
 	go func() {
-		for {
+		var lastErr error
+		var lastMetrics map[labels]struct{}
+		for waitCtx.Err() == nil {
 			time.Sleep(100 * time.Millisecond)
-			m := httpGetStr(t, "http://localhost:8080/metrics")
-			mm, err := parseMetrics(t, m)
+
+			m, err := httpGetStr(t, "http://localhost:8080/metrics")
 			if err != nil {
-				t.Logf("Error: %v", err)
+				lastErr = err
+				lastMetrics = nil
 				continue
 			}
+
+			mm, err := parseMetrics(t, m)
+			if err != nil {
+				lastErr = err
+				lastMetrics = nil
+				continue
+			}
+
+			lastErr = nil
+			lastMetrics = mm
 
 			if len(mm) == len(tc.okLabels) {
 				metrics <- mm
 				break
 			}
 		}
+
+		var errInfo errorInfo
+		if lastErr != nil {
+			errInfo.err = lastErr
+		} else if lastMetrics != nil {
+			errInfo.metrics = lastMetrics
+		}
+		errorInfoCh <- errInfo
 	}()
 
 	select {
@@ -184,7 +288,17 @@ func checkRun(t *testing.T, tc testcase) {
 		for _, l := range tc.ngLabels {
 			require.NotContains(t, mm, l)
 		}
-	case <-time.After(3 * time.Second):
+	case <-waitCtx.Done():
+		errInfo := <-errorInfoCh
+
+		if errInfo.err != nil {
+			t.Logf("Last error seen before timeout: %v", errInfo.err)
+		}
+
+		if errInfo.metrics != nil {
+			t.Logf("Last metrics seen before timeout: %v", errInfo.metrics)
+		}
+
 		// We assume that the server is expected to start and expose metrics within 2 seconds.
 		// Otherwise, we consider it as a failure, and you may need to fix the server implementation,
 		// or you may need to increase the timeout if the runtime environment is soooo slow.
@@ -220,7 +334,6 @@ func parseMetrics(t *testing.T, m string) (map[labels]struct{}, error) {
 	mm := make(map[labels]struct{})
 
 	for _, m := range mt.Metric {
-		t.Logf("Metric: %v", m)
 		var labels labels
 		for _, l := range m.Label {
 			switch *l.Name {
@@ -345,19 +458,17 @@ func setupDynamoDBTable(t *testing.T, ctx context.Context, awsConfig aws.Config,
 	})
 }
 
-func httpGetStr(t *testing.T, url string) string {
+func httpGetStr(t *testing.T, url string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
-		t.Logf("Error: %v", err)
-		return ""
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Logf("Error: %v", err)
-		return ""
+		return "", err
 	}
 
-	return string(body)
+	return string(body), nil
 }

@@ -320,7 +320,10 @@ func (c *checker) doCheckDynamoDB(ctx context.Context) {
 				_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
 					TableName:              &c.dynamodbTable,
 					KeyConditionExpression: aws.String("id = :id"),
-					ConsistentRead:         aws.Bool(true),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+					},
+					ConsistentRead: aws.Bool(true),
 				})
 				return err
 			},
