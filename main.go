@@ -144,6 +144,8 @@ type checker struct {
 	s3Opts       []func(*s3.Options)
 	sqsOpts      []func(*sqs.Options)
 	dynamodbOpts []func(*dynamodb.Options)
+
+	awsAPICallInterval time.Duration
 }
 
 type Option func(*checker)
@@ -164,6 +166,10 @@ func newChecker(cfg aws.Config, requestDuration *prometheus.HistogramVec, opts .
 	c.s3Key = os.Getenv("S3_KEY")
 	c.dynamodbTable = os.Getenv("DYNAMODB_TABLE")
 	c.sqsQueueURL = os.Getenv("SQS_QUEUE_URL")
+
+	if c.awsAPICallInterval == 0 {
+		c.awsAPICallInterval = 1 * time.Second
+	}
 
 	return c
 }
@@ -186,22 +192,7 @@ func (c *checker) doCheck(ctx context.Context) {
 		c.requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
 	}
 
-	// DynamoDB Scan
-	dynamoStart := time.Now()
-	_, err = c.dynamoClient.Scan(ctx, &dynamodb.ScanInput{
-		TableName: &c.dynamodbTable,
-	})
-	dynamoDuration := time.Since(dynamoStart).Seconds()
-	if ctx.Err() == context.Canceled {
-		log.Printf("context is canceled")
-		return
-	} else if err != nil {
-		log.Printf("failed to get item, %v", err)
-		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Failure").Observe(dynamoDuration)
-	} else {
-		c.requestDuration.WithLabelValues("DynamoDB", "Scan", "Success").Observe(dynamoDuration)
-	}
-
+	// DynamoDB Operations
 	c.doCheckDynamoDB(ctx)
 	if ctx.Err() == context.Canceled {
 		log.Printf("context is canceled")
@@ -226,146 +217,191 @@ func (c *checker) doCheck(ctx context.Context) {
 }
 
 type operation struct {
-	method    string
-	operation func() error
+	method     string
+	operations []func() error
 }
 
 func (c *checker) doCheckDynamoDB(ctx context.Context) {
 	c.doCheckService(ctx, "DynamoDB", []operation{
 		{
+			method: "Scan",
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.Scan(ctx, &dynamodb.ScanInput{
+						TableName: &c.dynamodbTable,
+					})
+					return err
+				},
+			},
+		},
+		{
 			method: "PutItem",
-			operation: func() error {
-				_, err := c.dynamoClient.PutItem(ctx, &dynamodb.PutItemInput{
-					TableName: &c.dynamodbTable,
-					Item: map[string]dynamodbtypes.AttributeValue{
-						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-						"data": &dynamodbtypes.AttributeValueMemberS{Value: "test-data"},
-					},
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.PutItem(ctx, &dynamodb.PutItemInput{
+						TableName: &c.dynamodbTable,
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id":   &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+							"data": &dynamodbtypes.AttributeValueMemberS{Value: "test-data"},
+						},
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "UpdateItem",
-			operation: func() error {
-				_, err := c.dynamoClient.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-					TableName: &c.dynamodbTable,
-					Key: map[string]dynamodbtypes.AttributeValue{
-						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-					UpdateExpression: aws.String("SET #data = :data"),
-					ExpressionAttributeNames: map[string]string{
-						"#data": "data",
-					},
-					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-						":data": &dynamodbtypes.AttributeValueMemberS{Value: "updated-data"},
-					},
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+						TableName: &c.dynamodbTable,
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+						UpdateExpression: aws.String("SET #data = :data"),
+						ExpressionAttributeNames: map[string]string{
+							"#data": "data",
+						},
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+							":data": &dynamodbtypes.AttributeValueMemberS{Value: "updated-data"},
+						},
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "DeleteItem",
-			operation: func() error {
-				_, err := c.dynamoClient.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-					TableName: &c.dynamodbTable,
-					Key: map[string]dynamodbtypes.AttributeValue{
-						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+						TableName: &c.dynamodbTable,
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "GetItem",
-			operation: func() error {
-				_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
-					TableName: &c.dynamodbTable,
-					Key: map[string]dynamodbtypes.AttributeValue{
-						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
+						TableName: &c.dynamodbTable,
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "GetItemConsistent",
-			operation: func() error {
-				_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
-					TableName: &c.dynamodbTable,
-					Key: map[string]dynamodbtypes.AttributeValue{
-						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-					ConsistentRead: aws.Bool(true),
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
+						TableName: &c.dynamodbTable,
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+						ConsistentRead: aws.Bool(true),
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "Query",
-			operation: func() error {
-				_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
-					TableName:              &c.dynamodbTable,
-					KeyConditionExpression: aws.String("id = :id"),
-					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-						":id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
+						TableName:              &c.dynamodbTable,
+						KeyConditionExpression: aws.String("id = :id"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+							":id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "QueryConsistent",
-			operation: func() error {
-				_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
-					TableName:              &c.dynamodbTable,
-					KeyConditionExpression: aws.String("id = :id"),
-					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-						":id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-					ConsistentRead: aws.Bool(true),
-				})
-				return err
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.Query(ctx, &dynamodb.QueryInput{
+						TableName:              &c.dynamodbTable,
+						KeyConditionExpression: aws.String("id = :id"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+							":id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+						ConsistentRead: aws.Bool(true),
+					})
+					return err
+				},
 			},
 		},
 		{
 			method: "PutGetItemConsistent",
-			operation: func() error {
-				_, err := c.dynamoClient.PutItem(ctx, &dynamodb.PutItemInput{
-					TableName: &c.dynamodbTable,
-					Item: map[string]dynamodbtypes.AttributeValue{
-						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-						"data": &dynamodbtypes.AttributeValueMemberS{Value: "test-data"},
-					},
-				})
-				if err != nil {
+			operations: []func() error{
+				func() error {
+					_, err := c.dynamoClient.PutItem(ctx, &dynamodb.PutItemInput{
+						TableName: &c.dynamodbTable,
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id":   &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+							"data": &dynamodbtypes.AttributeValueMemberS{Value: "test-data"},
+						},
+					})
 					return err
-				}
-
-				_, err = c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
-					TableName: &c.dynamodbTable,
-					Key: map[string]dynamodbtypes.AttributeValue{
-						"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
-					},
-					ConsistentRead: aws.Bool(true),
-				})
-				return err
+				},
+				func() error {
+					_, err := c.dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
+						TableName: &c.dynamodbTable,
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "test-id"},
+						},
+						ConsistentRead: aws.Bool(true),
+					})
+					return err
+				},
 			},
 		},
 	})
 }
 
+// doCheckService is a helper function to check a service.
+// It takes a list of operations to be checked and a service name.
+// The checks are NOT called in parallel, to avoid rate limit errors (for example, throughput errors for DynamoDB).
+// Operations are spaced out with a 1 second delay to stay within throughput limits.
 func (c *checker) doCheckService(ctx context.Context, service string, operations []operation) {
 	for _, op := range operations {
 		start := time.Now()
-		err := op.operation()
+		var opErr error
+
+		for _, fn := range op.operations {
+			if err := fn(); err != nil {
+				opErr = err
+				break
+			}
+
+			// Add 1 second delay between operations to stay within throughput limits
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(c.awsAPICallInterval):
+			}
+		}
+
 		duration := time.Since(start).Seconds()
 
 		if ctx.Err() == context.Canceled {
 			log.Printf("context is canceled")
 			return
-		} else if err != nil {
-			log.Printf("failed to %s, %v", op.method, err)
+		} else if opErr != nil {
+			log.Printf("failed to %s, %v", op.method, opErr)
 			c.requestDuration.WithLabelValues(service, op.method, "Failure").Observe(duration)
 		} else {
 			c.requestDuration.WithLabelValues(service, op.method, "Success").Observe(duration)
