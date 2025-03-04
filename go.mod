@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.78.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.0
 	github.com/aws/smithy-go v1.22.3
-	github.com/prometheus/client_golang v1.21.0
+	github.com/prometheus/client_golang v1.21.1
 	github.com/prometheus/common v0.62.0
 	github.com/stretchr/testify v1.10.0
 )
