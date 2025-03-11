@@ -102,31 +102,48 @@ func Run(ctx context.Context, opts ...Option) error {
 	chkr := newChecker(cfg, requestDuration, opts...)
 	checkCtx, checkCancel := context.WithCancel(ctx)
 
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Context is canceled, exiting...")
+	startChecks(checkCtx, chkr.awsAPICallInterval, chkr.doCheckS3)
+	startChecks(checkCtx, chkr.awsAPICallInterval, chkr.doCheckDynamoDB)
+	startChecks(checkCtx, chkr.awsAPICallInterval, chkr.doCheckSQS)
 
-			// Stop the checker
-			checkCancel()
+	<-ctx.Done()
 
-			// Graceful shutdown
-			ctx, cancel := context.WithTimeout(context.Background(), httpServerGracefulShutdownTimeout)
-			defer cancel()
+	fmt.Println("Context is canceled, exiting...")
 
-			if err := httpServer.Shutdown(ctx); err != nil {
-				return fmt.Errorf("failed to shutdown http server, %v", err)
-			}
+	// Stop the checker
+	checkCancel()
 
-			log.Printf("[DEBUG] HTTP server shut down with this return value: %v", <-listenErr)
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), httpServerGracefulShutdownTimeout)
+	defer cancel()
 
-			log.Printf("HTTP server shut down successfully")
-
-			return nil
-		case <-time.After(1 * time.Second):
-			chkr.doCheck(checkCtx)
-		}
+	if err := httpServer.Shutdown(ctx); err != nil {
+		return fmt.Errorf("failed to shutdown http server, %v", err)
 	}
+
+	log.Printf("[DEBUG] HTTP server shut down with this return value: %v", <-listenErr)
+
+	log.Printf("HTTP server shut down successfully")
+
+	return nil
+}
+
+// startChecks runs the given function startChecks, each time the interval has passed,
+// until the context is canceled.
+//
+// We intentionally use time.After instead of time.Ticker to have delay each check by the interval,
+// regardless of how long the previous check took.
+func startChecks(ctx context.Context, interval time.Duration, run func(ctx context.Context)) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(interval):
+				run(ctx)
+			}
+		}
+	}()
 }
 
 type checker struct {
@@ -174,7 +191,7 @@ func newChecker(cfg aws.Config, requestDuration *prometheus.HistogramVec, opts .
 	return c
 }
 
-func (c *checker) doCheck(ctx context.Context) {
+func (c *checker) doCheckS3(ctx context.Context) {
 	// S3 GetObject
 	getStart := time.Now()
 	_, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{
@@ -191,17 +208,12 @@ func (c *checker) doCheck(ctx context.Context) {
 	} else {
 		c.requestDuration.WithLabelValues("S3", "GetObject", "Success").Observe(getDuration)
 	}
+}
 
-	// DynamoDB Operations
-	c.doCheckDynamoDB(ctx)
-	if ctx.Err() == context.Canceled {
-		log.Printf("context is canceled")
-		return
-	}
-
+func (c *checker) doCheckSQS(ctx context.Context) {
 	// SQS ReceiveMessage
 	sqsStart := time.Now()
-	_, err = c.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+	_, err := c.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl: &c.sqsQueueURL,
 	})
 	sqsDuration := time.Since(sqsStart).Seconds()
