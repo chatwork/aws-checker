@@ -2,8 +2,8 @@ name: Automated Dependabot patch release
 
 on:
   schedule:
-    # Run every day at 4:30 UTC = 13:30 JST
-    - cron: '30 4 * * *'
+    # Run every monday at 4:30 UTC = 13:30 JST
+    - cron: '30 4 * * 1'
 
 jobs:
   auto_patch_release:
