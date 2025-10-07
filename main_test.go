@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/cw-sakamoto/sample/localstack"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -323,7 +324,7 @@ type labels struct {
 }
 
 func parseMetrics(t *testing.T, m string) (map[labels]struct{}, error) {
-	p := expfmt.TextParser{}
+	p := expfmt.NewTextParser(model.UTF8Validation)
 	mf, err := p.TextToMetricFamilies(strings.NewReader(m))
 	require.NoError(t, err)
 
