@@ -1,3 +1,5 @@
+name: Test
+
 on:
   pull_request:
     branches:
@@ -21,6 +23,7 @@ jobs:
       - id: set
         run: go run ./tools/setghaoutputs | tee -a "$GITHUB_OUTPUT"
   test:
+    name: test
     needs: setup
     runs-on: ubuntu-latest
     strategy:
