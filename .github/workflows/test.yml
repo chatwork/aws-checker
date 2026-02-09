@@ -35,7 +35,7 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: Start LocalStack
-        uses: LocalStack/setup-localstack@9392b05ddb345894c2e86305fc426566e738c1db # v0.2.4
+        uses: LocalStack/setup-localstack@1feaef8f3b6f6f22261b7e7c827ff1ae9cdd3c2b # v0.2.5
         with:
           image-tag: 'latest'
           install-awslocal: 'true'
