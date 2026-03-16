@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.12
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.1
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.23
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.24
 	github.com/aws/smithy-go v1.24.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
